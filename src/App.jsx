@@ -9,6 +9,8 @@ import AuthStatus from "./components/AuthStatus";
 import { startRealtime, stopRealtime } from "./lib/ws";
 import MapControls from "./components/MapControls";
 import ChatPanel from "./components/ChatPanel";
+import OfflineQueueWidget from "./components/OfflineQueueWidget";
+import ToastStack from "./components/ToastStack";
 
 function App() {
   const flushQueue = useAppStore((s) => s.flushQueue);
@@ -40,9 +42,11 @@ function App() {
       <AuthStatus />
       <MapControls />
       <QuickActions />
+      <OfflineQueueWidget />
       <IncidentForm />
       <ShiftSummary />
       <ChatPanel />
+      <ToastStack />
     </div>
   );
 }

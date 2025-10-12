@@ -108,3 +108,14 @@ export async function createBlitz({ latitude, longitude, description = "", blitz
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json().catch(() => null);
 }
+
+export async function logAuditEvent({ action, entityType, entityId = null, metadata = "" }) {
+  const body = { action, entityType, entityId, metadata };
+  const res = await fetch(buildUrl("/api/audit"), {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text().catch(() => null);
+}
