@@ -4,10 +4,32 @@ import {
   createShift,
   updateShift,
   createBlitz,
+  logAuditEvent,
   mapIncidentDto,
   mapShiftStartDto,
   mapShiftEndDto,
 } from "../lib/api";
+
+const QUEUE_KEY = "offlineQueue";
+const SHIFT_ID_MAP_KEY = "shiftIdMap";
+
+function getStorage() {
+  try {
+    return typeof window !== "undefined" ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function readQueue() {
+  const storage = getStorage();
+  if (!storage) return [];
+  try {
+    return JSON.parse(storage.getItem(QUEUE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
 
 export const useAppStore = create((set, get) => ({
   showIncidentForm: false,
@@ -56,25 +78,71 @@ export const useAppStore = create((set, get) => ({
   incidents: [],
   addIncident: (inc) => set({ incidents: [...get().incidents, inc] }),
 
+  // Toasts
+  toasts: [],
+  pushToast: ({ message, type = "info", duration = 4000 }) => {
+    const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const entry = { id, message, type, createdAt: Date.now() };
+    set({ toasts: [...get().toasts, entry] });
+    setTimeout(() => {
+      const toasts = get().toasts;
+      if (toasts.some((t) => t.id === id)) {
+        set({ toasts: toasts.filter((t) => t.id !== id) });
+      }
+    }, duration);
+    return id;
+  },
+  removeToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
+
+  // Offline queue state
+  queueLength: readQueue().length,
+  refreshQueueLength: () => {
+    const length = readQueue().length;
+    set({ queueLength: length });
+    return length;
+  },
+  clearQueue: async () => {
+    const items = readQueue();
+    const storage = getStorage();
+    if (storage) {
+      try {
+        storage.removeItem(QUEUE_KEY);
+        storage.removeItem(SHIFT_ID_MAP_KEY);
+      } catch {}
+    }
+    set({ queueLength: 0 });
+    try {
+      await logAuditEvent({
+        action: "OFFLINE_QUEUE_CLEAR",
+        entityType: "OfflineQueue",
+        metadata: JSON.stringify({ cleared: items.length }),
+      });
+      return { cleared: items.length, auditLogged: true };
+    } catch (error) {
+      return { cleared: items.length, auditLogged: false, error };
+    }
+  },
+
   // Offline queue (simple)
   enqueue: (item) => {
     try {
-      const key = "offlineQueue";
-      const q = JSON.parse(localStorage.getItem(key) || "[]");
+      const storage = getStorage();
+      if (!storage) return;
+      const q = JSON.parse(storage.getItem(QUEUE_KEY) || "[]");
       q.push(item);
-      localStorage.setItem(key, JSON.stringify(q));
+      storage.setItem(QUEUE_KEY, JSON.stringify(q));
+      set({ queueLength: q.length });
     } catch (e) {
       // ignore quota/JSON errors in this simple client
     }
   },
   flushQueue: async () => {
-    const key = "offlineQueue";
-    const q = JSON.parse(localStorage.getItem(key) || "[]");
+    const q = readQueue();
     if (!q.length) return { sent: 0, failed: 0 };
     const remaining = [];
     let sent = 0;
-    const idMapKey = "shiftIdMap";
-    const idMap = JSON.parse(localStorage.getItem(idMapKey) || "{}");
+    const storage = getStorage();
+    const idMap = storage ? JSON.parse(storage.getItem(SHIFT_ID_MAP_KEY) || "{}") : {};
 
     for (const item of q) {
       try {
@@ -95,7 +163,7 @@ export const useAppStore = create((set, get) => ({
           const localId = item.payload?.localId;
           if (serverId && localId) {
             idMap[localId] = serverId;
-            localStorage.setItem(idMapKey, JSON.stringify(idMap));
+            storage?.setItem(SHIFT_ID_MAP_KEY, JSON.stringify(idMap));
           }
           sent += 1;
           continue;
@@ -118,7 +186,8 @@ export const useAppStore = create((set, get) => ({
         remaining.push(item);
       }
     }
-    localStorage.setItem(key, JSON.stringify(remaining));
+    storage?.setItem(QUEUE_KEY, JSON.stringify(remaining));
+    set({ queueLength: remaining.length });
     return { sent, failed: remaining.length };
   },
 }));
